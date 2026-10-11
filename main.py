@@ -44,6 +44,7 @@
     python main.py --genkeys      # 生成两对密钥
     python main.py --ping         # 命令行自检：测试连通性与签名
     python main.py --list         # 列出远端文件
+    python main.py --upload       # 一键上传：同步 local_files/ 到远端并归档多余文件
     python main.py                # 打开图形界面
 
 依赖
@@ -752,6 +753,102 @@ def upload_pending(client, pending: list[dict], log, progress,
         index = next_index
 
     return uploaded, failures, budget
+
+
+# ------------------------------------------------------------------ 上传流程（GUI / 命令行共用）
+
+def run_upload(client, log, progress, skip_same: bool = True, bump_assets: bool = True,
+               budget: int = UPLOAD_CHUNK_BYTES) -> dict:
+    """把 local_files/ 同步到远端：上传有变化的文件 + 归档远端多余文件。
+
+    log(message, level="info") / progress(current, total, label) 由调用方提供
+    （GUI 走 Qt 信号，命令行走 print）。返回统计 dict，其中 "budget" 是本次最终生效的
+    分片预算（可能因 413 自动降档），供调用方在多次调用间记住。
+    """
+    log("正在连接远端 ...")
+    info = client.ping()
+    capabilities = set(info.get("features") or [])
+    log(f"连接成功：服务端 v{info.get('version')}"
+        f"（构建 {info.get('api_build') or '未知'}），PHP {info.get('php_version')}", "ok")
+
+    local = scan_local(LOCAL_DIR)
+    if not local:
+        raise FileSyncError(f"本地目录为空或不存在：{LOCAL_DIR}")
+    log(f"本地文件 {len(local)} 个", "ok")
+
+    # 刷新页面里的静态资源版本号（?v= 取被引用文件的内容哈希）。
+    # 必须在扫描之后、比对之前重算 sha256，否则会把新内容配上旧哈希发出去。
+    if bump_assets:
+        htmls = sorted(rel for rel in local if rel.lower().endswith((".html", ".htm")))
+        if htmls:
+            cache: dict[str, str] = {}
+            refs = sum(
+                bump_asset_versions(LOCAL_DIR / rel, LOCAL_DIR, cache)
+                for rel in htmls
+            )
+            if refs:
+                local = scan_local(LOCAL_DIR)
+                log(f"静态资源版本号已刷新：{refs} 处 -> ?v=<内容哈希前 12 位>")
+
+    remote, ignored_remote = remote_snapshot(client)
+    log(f"远端文件 {len(remote)} 个", "ok")
+
+    if skip_same:
+        pending = [
+            item for path, item in sorted(local.items())
+            if remote.get(path, {}).get("sha256") != item["sha256"]
+        ]
+        log(f"内容有变化的文件 {len(pending)} 个（其余跳过）")
+    else:
+        pending = [item for _, item in sorted(local.items())]
+        log(f"将上传全部 {len(pending)} 个文件（覆盖同名）")
+
+    if not pending:
+        log("没有需要上传的文件", "ok")
+
+    # 分片上传：小文件成批打包、大文件按预算切片，遇 413 自动降档
+    uploaded, failures, budget = upload_pending(
+        client, pending, log, progress, budget, capabilities
+    )
+    total_bytes = sum(item["size"] for item in pending) or 1
+
+    if failures:
+        for item in failures:
+            log(f"写入失败：{item.get('path')}（{item.get('error')}）", "error")
+
+    # 归档远端多余文件
+    progress(total_bytes, total_bytes, "归档多余文件")
+    log("正在归档远端多余文件 ...")
+    # 保留清单要带上被忽略的远端路径，否则它们会被当成「多余文件」归档
+    result = client.prune(sorted(set(local.keys()) | ignored_remote))
+    moved = result.get("moved", [])
+    if moved:
+        for path in moved[:20]:
+            log(f"已归档 -> ignored/{path}", "warn")
+        if len(moved) > 20:
+            log(f"... 其余 {len(moved) - 20} 个已归档", "warn")
+    else:
+        log("远端没有多余文件需要归档", "ok")
+
+    for item in result.get("errors", []):
+        log(f"归档失败：{item.get('path')}（{item.get('error')}）", "error")
+
+    after, _ = remote_snapshot(client)
+    log(
+        f"完成：上传 {uploaded} 个，归档 {len(moved)} 个，"
+        f"远端现有 {len(after)} 个文件",
+        "ok",
+    )
+    progress(total_bytes, total_bytes, "完成")
+    return {
+        "local_count": len(local),
+        "remote_count": len(after),
+        "plan": f"上传 {uploaded} / 归档 {len(moved)}",
+        "uploaded": uploaded,
+        "moved": len(moved),
+        "budget": budget,
+        "failures": failures,
+    }
 
 
 # ------------------------------------------------------------------ 静态资源版本号
@@ -1929,88 +2026,12 @@ def build_ui_classes():
             )
 
         def _task_upload(self, log, progress, skip_same: bool, bump_assets: bool):
-            log("正在连接远端 ...")
-            info = self.client.ping()
-            capabilities = set(info.get("features") or [])
-            log(f"连接成功：服务端 v{info.get('version')}"
-                f"（构建 {info.get('api_build') or '未知'}），PHP {info.get('php_version')}", "ok")
-
-            local = scan_local(LOCAL_DIR)
-            if not local:
-                raise FileSyncError(f"本地目录为空或不存在：{LOCAL_DIR}")
-            log(f"本地文件 {len(local)} 个", "ok")
-
-            # 刷新页面里的静态资源版本号（?v= 取被引用文件的内容哈希）。
-            # 必须在扫描之后、比对之前重算 sha256，否则会把新内容配上旧哈希发出去。
-            if bump_assets:
-                htmls = sorted(
-                    rel for rel in local if rel.lower().endswith((".html", ".htm"))
-                )
-                if htmls:
-                    cache: dict[str, str] = {}
-                    refs = sum(
-                        bump_asset_versions(LOCAL_DIR / rel, LOCAL_DIR, cache)
-                        for rel in htmls
-                    )
-                    if refs:
-                        local = scan_local(LOCAL_DIR)
-                        log(f"静态资源版本号已刷新：{refs} 处 -> ?v=<内容哈希前 12 位>")
-
-            remote, ignored_remote = remote_snapshot(self.client)
-            log(f"远端文件 {len(remote)} 个", "ok")
-
-            if skip_same:
-                pending = [
-                    item for path, item in sorted(local.items())
-                    if remote.get(path, {}).get("sha256") != item["sha256"]
-                ]
-                log(f"内容有变化的文件 {len(pending)} 个（其余跳过）")
-            else:
-                pending = [item for _, item in sorted(local.items())]
-                log(f"将上传全部 {len(pending)} 个文件（覆盖同名）")
-
-            if not pending:
-                log("没有需要上传的文件", "ok")
-
-            # 分片上传：小文件成批打包、大文件按预算切片，遇 413 自动降档
-            uploaded, failures, self._upload_budget = upload_pending(
-                self.client, pending, log, progress, self._upload_budget, capabilities
+            # 核心流程与命令行 --upload 共用 run_upload()，这里只负责记住降档后的预算
+            result = run_upload(
+                self.client, log, progress, skip_same, bump_assets, self._upload_budget
             )
-            total_bytes = sum(item["size"] for item in pending) or 1
-
-            if failures:
-                for item in failures:
-                    log(f"写入失败：{item.get('path')}（{item.get('error')}）", "error")
-
-            # 归档远端多余文件
-            progress(total_bytes, total_bytes, "归档多余文件")
-            log("正在归档远端多余文件 ...")
-            # 保留清单要带上被忽略的远端路径，否则它们会被当成「多余文件」归档
-            result = self.client.prune(sorted(set(local.keys()) | ignored_remote))
-            moved = result.get("moved", [])
-            if moved:
-                for path in moved[:20]:
-                    log(f"已归档 -> ignored/{path}", "warn")
-                if len(moved) > 20:
-                    log(f"... 其余 {len(moved) - 20} 个已归档", "warn")
-            else:
-                log("远端没有多余文件需要归档", "ok")
-
-            for item in result.get("errors", []):
-                log(f"归档失败：{item.get('path')}（{item.get('error')}）", "error")
-
-            after, _ = remote_snapshot(self.client)
-            log(
-                f"完成：上传 {uploaded} 个，归档 {len(moved)} 个，"
-                f"远端现有 {len(after)} 个文件",
-                "ok",
-            )
-            progress(total_bytes, total_bytes, "完成")
-            return {
-                "local_count": len(local),
-                "remote_count": len(after),
-                "plan": f"上传 {uploaded} / 归档 {len(moved)}",
-            }
+            self._upload_budget = result.get("budget", self._upload_budget)
+            return result
 
     # ------------------------------------------------------------------ 对比页
 
@@ -2452,6 +2473,37 @@ def cmd_genkeys(force: bool) -> int:
     return 0
 
 
+def cmd_upload() -> int:
+    """一键上传：把 local_files/ 同步到远端，并归档远端多余文件。
+
+    与图形界面「上传文件」共用同一套逻辑（run_upload）：
+    默认跳过内容完全相同的文件，并自动刷新页面里的静态资源版本号（?v=）。
+    """
+    client = FileSyncClient()
+
+    def log(message: str, level: str = "info") -> None:
+        tag = {"ok": "[OK] ", "warn": "[!]  ", "error": "[x]  "}.get(level, "     ")
+        print(tag + message)
+
+    def progress(current: int, total: int, label: str = "") -> None:
+        if total > 0 and label:
+            pct = int(current * 100 / total)
+            print(f"\r     {label} {pct}%", end="", flush=True)
+
+    print(f"远端接口：{client.url}")
+    try:
+        result = run_upload(client, log, progress)
+    except FileSyncError as exc:
+        print()                      # 收尾进度行
+        print(f"[失败] {exc}")
+        return 1
+
+    print()                          # 收尾进度行
+    print(f"[成功] 上传 {result['uploaded']} 个，归档 {result['moved']} 个，"
+          f"远端现有 {result['remote_count']} 个文件")
+    return 0
+
+
 # ============================================================================
 #  启动自检：本地目录结构初始化
 # ============================================================================
@@ -2791,6 +2843,8 @@ def main() -> int:
     parser.add_argument("--force", action="store_true", help="配合 --genkeys 覆盖已有密钥")
     parser.add_argument("--ping", action="store_true", help="测试远端连通性与签名")
     parser.add_argument("--list", action="store_true", help="列出远端文件")
+    parser.add_argument("--upload", action="store_true",
+                        help="一键上传：把 local_files/ 同步到远端并归档多余文件")
     parser.add_argument("--url", metavar="URL", help="临时指定远端接口地址（不写入配置）")
     args = parser.parse_args()
 
@@ -2804,6 +2858,8 @@ def main() -> int:
         return cmd_ping()
     if args.list:
         return cmd_list()
+    if args.upload:
+        return cmd_upload()
 
     from PyQt6.QtWidgets import QApplication
 

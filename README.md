@@ -295,6 +295,7 @@ python main.py --genkeys            # 生成两对密钥（已存在时不覆盖
 python main.py --genkeys --force    # 强制重新生成（旧密钥立即失效）
 python main.py --ping               # 自检：连通性 + 双向签名 + 服务端配置
 python main.py --list               # 列出远端文件
+python main.py --upload             # 一键上传：同步 local_files/ 到远端并归档多余文件
 python main.py --url URL ...        # 临时指定接口地址（不写入配置）
 ```
 
