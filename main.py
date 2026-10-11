@@ -243,7 +243,7 @@ def generate_keys(force: bool = False) -> list[str]:
 #  客户端：签名请求 / 验签响应
 # ============================================================================
 
-class LGError(Exception):
+class FileSyncError(Exception):
     """业务或协议层面的错误。"""
 
     def __init__(self, message: str, code: str = "", status: int = 0) -> None:
@@ -256,7 +256,7 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-class LGClient:
+class FileSyncClient:
     def __init__(
         self,
         url: str | None = None,
@@ -277,7 +277,7 @@ class LGClient:
     def _private(self):
         if self._priv is None:
             if not self._client_key_path.exists():
-                raise LGError(
+                raise FileSyncError(
                     f"找不到客户端私钥：{self._client_key_path}\n"
                     f"请先执行：python {Path(sys.argv[0]).name} --genkeys"
                 )
@@ -289,7 +289,7 @@ class LGClient:
     def _server_public(self):
         if self._server_pub is None:
             if not self._server_key_path.exists():
-                raise LGError(
+                raise FileSyncError(
                     f"找不到服务端公钥：{self._server_key_path}\n"
                     f"请先执行：python {Path(sys.argv[0]).name} --genkeys"
                 )
@@ -330,7 +330,7 @@ class LGClient:
                 self.url, data=body, headers=headers, timeout=self.timeout
             )
         except requests.RequestException as exc:
-            raise LGError(f"网络请求失败：{exc}") from exc
+            raise FileSyncError(f"网络请求失败：{exc}") from exc
 
         self._verify_response(resp, nonce)
 
@@ -338,7 +338,7 @@ class LGClient:
             payload = resp.json()
         except ValueError as exc:
             # nginx 自己拦下的 413 是 HTML，这里补一个错误码，好让上传逻辑自动降档重试
-            raise LGError(
+            raise FileSyncError(
                 f"服务端返回了非 JSON 内容（HTTP {resp.status_code}）："
                 f"{resp.text[:200]}",
                 "body_too_large" if resp.status_code == 413 else "",
@@ -346,10 +346,10 @@ class LGClient:
             ) from exc
 
         if not isinstance(payload, dict):
-            raise LGError("服务端响应格式异常")
+            raise FileSyncError("服务端响应格式异常")
         if not payload.get("ok"):
             code = str(payload.get("error", ""))
-            raise LGError(self._describe_error(payload, resp.status_code), code,
+            raise FileSyncError(self._describe_error(payload, resp.status_code), code,
                           resp.status_code)
         return payload
 
@@ -357,7 +357,7 @@ class LGClient:
         sig_b64 = resp.headers.get("X-LG-Signature")
         if not sig_b64:
             if resp.status_code == 200:
-                raise LGError(
+                raise FileSyncError(
                     "服务端响应未签名，拒绝信任（请检查服务端密钥配置）"
                 )
             # 非 200 的错误响应可以不带签名，这里只在下方统一抛错
@@ -365,7 +365,7 @@ class LGClient:
         try:
             signature = base64.b64decode(sig_b64, validate=True)
         except ValueError as exc:
-            raise LGError("服务端签名不是合法 base64") from exc
+            raise FileSyncError("服务端签名不是合法 base64") from exc
 
         canonical = (
             f"{RESPONSE_TAG}\n{nonce}\n{sha256_hex(resp.content)}"
@@ -375,7 +375,7 @@ class LGClient:
                 signature, canonical, padding.PKCS1v15(), hashes.SHA256()
             )
         except InvalidSignature as exc:
-            raise LGError(
+            raise FileSyncError(
                 "服务端响应签名校验失败（可能密钥不匹配，或响应被篡改）"
             ) from exc
 
@@ -607,7 +607,7 @@ def upload_pending(client, pending: list[dict], log, progress,
         group_paths = set(group_names)
         if (capabilities is not None and "chunked_write" not in capabilities
                 and any(p["kind"] == "chunk" for parts in group for p in parts)):
-            raise LGError(
+            raise FileSyncError(
                 "服务端 api.php 不支持分片上传，请把最新的 FileSync_Server/api.php "
                 "重新上传到站点根目录（它是受保护文件，同步工具不会覆盖它）"
             )
@@ -622,7 +622,7 @@ def upload_pending(client, pending: list[dict], log, progress,
                 errors_here.extend(errors)
                 sent += sum(part_raw_size(p) for p in parts)
                 progress(base + sent, total_bytes, "上传中")
-        except LGError as exc:
+        except FileSyncError as exc:
             if ((exc.status == 413 or exc.code == "body_too_large")
                     and budget > UPLOAD_MIN_CHUNK):
                 new_budget = max(budget // 2, UPLOAD_MIN_CHUNK)
@@ -1522,7 +1522,7 @@ def build_ui_classes():
     class SettingsDialog(QDialog):
         """配置远端接口地址，并可直接执行 ping / list / genkeys / force。"""
 
-        def __init__(self, parent, client: LGClient, on_applied=None):
+        def __init__(self, parent, client: FileSyncClient, on_applied=None):
             super().__init__(parent)
             self.client = client
             self.on_applied = on_applied
@@ -1672,7 +1672,7 @@ def build_ui_classes():
     # ------------------------------------------------------------------ 上传页
 
     class UploadPage(QWidget):
-        def __init__(self, client: LGClient, on_back):
+        def __init__(self, client: FileSyncClient, on_back):
             super().__init__()
             self.client = client
             self.worker: Worker | None = None
@@ -1841,7 +1841,7 @@ def build_ui_classes():
 
             local = scan_local(LOCAL_DIR)
             if not local:
-                raise LGError(f"本地目录为空或不存在：{LOCAL_DIR}")
+                raise FileSyncError(f"本地目录为空或不存在：{LOCAL_DIR}")
             log(f"本地文件 {len(local)} 个", "ok")
 
             # 刷新页面里的静态资源版本号（?v= 取被引用文件的内容哈希）。
@@ -2029,7 +2029,7 @@ def build_ui_classes():
             self.pane_right.render_rows(right_rows)
 
     class DiffPage(QWidget):
-        def __init__(self, client: LGClient, on_back):
+        def __init__(self, client: FileSyncClient, on_back):
             super().__init__()
             self.client = client
             self.worker: Worker | None = None
@@ -2230,7 +2230,7 @@ def build_ui_classes():
     # ------------------------------------------------------------------ 主窗口
 
     class MainWindow(QMainWindow):
-        def __init__(self, client: LGClient):
+        def __init__(self, client: FileSyncClient):
             super().__init__()
             self.client = client
             self.setWindowTitle(APP_TITLE)
@@ -2322,10 +2322,10 @@ def _human_size(size: int | None) -> str:
 # ============================================================================
 
 def cmd_ping() -> int:
-    client = LGClient()
+    client = FileSyncClient()
     try:
         info = client.ping()
-    except LGError as exc:
+    except FileSyncError as exc:
         print(f"[失败] {exc}")
         return 1
     print("[成功] 连通性与双向签名校验通过"
@@ -2337,10 +2337,10 @@ def cmd_ping() -> int:
 
 
 def cmd_list() -> int:
-    client = LGClient()
+    client = FileSyncClient()
     try:
         files = client.list_files()
-    except LGError as exc:
+    except FileSyncError as exc:
         print(f"[失败] {exc}")
         return 1
     for item in files:
@@ -2650,7 +2650,7 @@ def run_startup_check(parent=None) -> None:
             f"初始化会在 {BASE_DIR} 下建好这些内容，"
             "并让你挑选哪些文件移入 local_files/（也就是会被上传的目录）。"
         )
-        ok_btn = ask.addButton("确定初始化", QMessageBox.ButtonRole.AcceptRole)
+        ok_btn = ask.addButton("确定", QMessageBox.ButtonRole.AcceptRole)
         ask.addButton("取消", QMessageBox.ButtonRole.RejectRole)
         ask.exec()
         if ask.clickedButton() is not ok_btn:
@@ -2715,7 +2715,7 @@ def main() -> int:
     app.setStyleSheet(QSS)
 
     MainWindow = build_ui_classes()
-    window = MainWindow(LGClient())
+    window = MainWindow(FileSyncClient())
     window.show()
     # 每次打开都检查一遍本地目录结构，缺了就引导初始化（见 run_startup_check）
     run_startup_check(window)
