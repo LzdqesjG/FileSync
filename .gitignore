@@ -1,0 +1,9 @@
+# ===== Runtime  =====
+__pycache__/
+.venv/
+
+# ===== FileSync =====
+client_config.json
+keys/
+local_files/
+FileSync_Server/
