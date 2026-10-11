@@ -34,6 +34,7 @@
 --------
     main.py                本客户端
     client_config.json     客户端配置（远端地址）
+    .filesyncignore        忽略清单（.gitignore 语法）：命中的文件两端都不检查
     keys/                  本地密钥（client_private.pem + server_public.pem）
     local_files/           待同步到远端的文件
     FileSync_Server/       远端（服务端）文件，需部署到服务器
@@ -101,6 +102,10 @@ CONFIG_PATH = BASE_DIR / "client_config.json"  # 客户端配置（远端地址�
 
 CLIENT_PRIVATE_KEY = KEY_DIR / "client_private.pem"
 SERVER_PUBLIC_KEY = KEY_DIR / "server_public.pem"
+
+# 忽略清单：语法与 .gitignore 一致。命中的文件在「本地扫描」和「远端比对」里都会被跳过，
+# 上传时也不会被算作“多余文件”而归档 —— 两边都不检查。
+FILESYNC_IGNORE_PATH = BASE_DIR / ".filesyncignore"
 
 KEY_CLIENT_PRIVATE = "client_private.pem"
 KEY_CLIENT_PUBLIC = "client_public.pem"
@@ -482,21 +487,91 @@ def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
+def load_filesyncignore() -> list[tuple[str, bool]]:
+    """读取 .filesyncignore，返回 [(pattern, negated), ...]（顺序即生效顺序）。
+
+    语法与 .gitignore 一致：空行与 # 注释忽略，! 前缀表示取消忽略；
+    文件不存在时返回空列表（不额外跳过任何文件）。
+    """
+    rules: list[tuple[str, bool]] = []
+    if not FILESYNC_IGNORE_PATH.is_file():
+        return rules
+    try:
+        text = FILESYNC_IGNORE_PATH.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return rules
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        negated = line.startswith("!")
+        if negated:
+            line = line[1:].strip()
+        if line:
+            rules.append((line, negated))
+    return rules
+
+
+def _match_pattern(pattern: str, rel: str, is_dir: bool) -> bool:
+    """判断相对路径 rel 是否命中单条 gitignore 风格规则。
+
+    · 不带斜杠的规则匹配任意一层名字（如 `*.log`、`rate_limit`）；
+    · 带斜杠的规则从同步根开始匹配（如 `build/output`）；
+    · 以 / 结尾只匹配目录（如 `rate_limit/`）；
+    · 目录被命中时，其下所有内容都算命中。
+    """
+    dir_only = pattern.endswith("/")
+    pat = pattern.rstrip("/")
+    if not pat:
+        return False
+
+    parts = rel.split("/")
+    ancestors = ["/".join(parts[:i]) for i in range(1, len(parts))]  # 不含自身
+    targets = list(ancestors)
+    if not dir_only or is_dir:
+        targets.append(rel)
+
+    if "/" in pat:
+        return any(fnmatch.fnmatchcase(t, pat) for t in targets)
+    return any(fnmatch.fnmatchcase(t.rsplit("/", 1)[-1], pat) for t in targets)
+
+
+def is_ignored(rel: str, rules: list[tuple[str, bool]], is_dir: bool = False) -> bool:
+    """按规则判断相对路径是否应跳过；后面的规则可以覆盖前面的（与 git 一致）。"""
+    ignored = False
+    for pattern, negated in rules:
+        if _match_pattern(pattern, rel, is_dir):
+            ignored = not negated
+    return ignored
+
+
 def scan_local(root: Path) -> dict[str, dict]:
-    """返回 {相对路径: {path, size, sha256}}，跳过隐藏项与受保护文件。"""
+    """返回 {相对路径: {path, size, sha256}}。
+
+    跳过隐藏项、远端受保护文件，以及被 .filesyncignore 命中的项。
+    """
     result: dict[str, dict] = {}
     if not root.is_dir():
         return result
+    rules = load_filesyncignore()
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(
-            d for d in dirnames
-            if not d.startswith(".") and d not in PROTECTED_REMOTE
-        )
+        kept_dirs = []
+        for d in dirnames:
+            if d.startswith(".") or d in PROTECTED_REMOTE:
+                continue
+            rel_dir = (Path(dirpath) / d).relative_to(root).as_posix()
+            if is_ignored(rel_dir, rules, is_dir=True):
+                continue
+            kept_dirs.append(d)
+        dirnames[:] = sorted(kept_dirs)
+
         for name in sorted(filenames):
             if name.startswith(".") or name in PROTECTED_REMOTE:
                 continue
             full = Path(dirpath) / name
             rel = full.relative_to(root).as_posix()
+            if is_ignored(rel, rules):
+                continue
             try:
                 size = full.stat().st_size
                 digest = sha256_file(full)
@@ -504,6 +579,25 @@ def scan_local(root: Path) -> dict[str, dict]:
                 continue
             result[rel] = {"path": rel, "size": size, "sha256": digest}
     return result
+
+
+def remote_snapshot(client) -> tuple[dict[str, dict], set[str]]:
+    """列出远端文件并按 .filesyncignore 分成 (需要检查的, 被忽略的)。
+
+    被忽略的远端路径不参与对比、也不会被归档；上传归档时要把它们放进保留清单。
+    """
+    rules = load_filesyncignore()
+    kept: dict[str, dict] = {}
+    ignored: set[str] = set()
+    for item in client.list_files():
+        path = str(item.get("path", ""))
+        if not path:
+            continue
+        if is_ignored(path, rules):
+            ignored.add(path)
+        else:
+            kept[path] = item
+    return kept, ignored
 
 
 # ------------------------------------------------------------------ 分片上传
@@ -1803,8 +1897,10 @@ def build_ui_classes():
             log(f"本地文件 {len(local)} 个", "ok")
 
             progress(0, 1, "扫描远端")
-            remote = {f["path"]: f for f in self.client.list_files()}
-            log(f"远端文件 {len(remote)} 个", "ok")
+            remote, ignored_remote = remote_snapshot(self.client)
+            log(f"远端文件 {len(remote)} 个"
+                + (f"（另有 {len(ignored_remote)} 个被 .filesyncignore 跳过）"
+                   if ignored_remote else ""), "ok")
 
             changed = [
                 p for p, item in local.items()
@@ -1860,7 +1956,7 @@ def build_ui_classes():
                         local = scan_local(LOCAL_DIR)
                         log(f"静态资源版本号已刷新：{refs} 处 -> ?v=<内容哈希前 12 位>")
 
-            remote = {f["path"]: f for f in self.client.list_files()}
+            remote, ignored_remote = remote_snapshot(self.client)
             log(f"远端文件 {len(remote)} 个", "ok")
 
             if skip_same:
@@ -1889,7 +1985,8 @@ def build_ui_classes():
             # 归档远端多余文件
             progress(total_bytes, total_bytes, "归档多余文件")
             log("正在归档远端多余文件 ...")
-            result = self.client.prune(list(local.keys()))
+            # 保留清单要带上被忽略的远端路径，否则它们会被当成「多余文件」归档
+            result = self.client.prune(sorted(set(local.keys()) | ignored_remote))
             moved = result.get("moved", [])
             if moved:
                 for path in moved[:20]:
@@ -1902,7 +1999,7 @@ def build_ui_classes():
             for item in result.get("errors", []):
                 log(f"归档失败：{item.get('path')}（{item.get('error')}）", "error")
 
-            after = self.client.list_files()
+            after, _ = remote_snapshot(self.client)
             log(
                 f"完成：上传 {uploaded} 个，归档 {len(moved)} 个，"
                 f"远端现有 {len(after)} 个文件",
@@ -2100,7 +2197,7 @@ def build_ui_classes():
 
         def _task_compare(self, log, progress):
             progress(0, 1, "读取远端")
-            remote = {f["path"]: f for f in self.client.list_files()}
+            remote, _ = remote_snapshot(self.client)
             progress(0, 1, "读取本地")
             local = scan_local(LOCAL_DIR)
 

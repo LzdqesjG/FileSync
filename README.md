@@ -123,7 +123,7 @@ keys/                 且里面要有 client_private.pem 与 server_public.pem
 client_config.json    远端接口地址
 ```
 
-点「确定初始化」后会弹出当前目录的**文件列表**，勾选要放进 `local_files/` 的条目，
+点「确定」后会弹出当前目录的**文件列表**，勾选要放进 `local_files/` 的条目，
 确认后就会：建目录 → 补配置（默认地址 `https://example.com/file_sync/api.php`）
 → 补密钥 → 把勾中的条目**移动**进 `local_files/`。
 
