@@ -1,0 +1,392 @@
+/* ============================================================================
+ * FileSync 在线编辑器样式（深色，仿 code-server 布局）
+ * ========================================================================== */
+
+:root {
+  --bg: #1e1e1e;
+  --panel: #252526;
+  --panel-2: #2d2d30;
+  --border: #3c3c3c;
+  --text: #d4d4d4;
+  --muted: #8a8a8a;
+  --accent: #0e639c;
+  --accent-hover: #1177bb;
+  --green: #4ec9b0;
+  --red: #f48771;
+  --mono: "Cascadia Mono", "Consolas", "SFMono-Regular", "Menlo", "DejaVu Sans Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+button:hover { background: #3a3a3d; border-color: #555; }
+button:active { background: #454548; }
+
+input[type="text"], input[type="search"], input[type="password"] {
+  background: #1b1b1b;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+  outline: none;
+  width: 100%;
+}
+input:focus { border-color: var(--accent); }
+
+.hidden { display: none !important; }
+.muted { color: var(--muted); }
+.spacer { flex: 1; }
+
+/* ------------------------------- 登录页 ------------------------------- */
+
+.login-wrap {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.login-card {
+  width: min(360px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 28px 24px;
+}
+.login-card h1 { margin: 0 0 6px; font-size: 20px; }
+.login-card p { margin: 0 0 16px; }
+.login-card input { margin-bottom: 12px; }
+.login-card button {
+  width: 100%;
+  background: var(--accent);
+  border-color: var(--accent);
+  padding: 9px;
+  font-size: 14px;
+}
+.login-card button:hover { background: var(--accent-hover); }
+.login-card .error { color: var(--red); margin-top: 10px; font-size: 12px; }
+
+/* ------------------------------- 主布局 ------------------------------- */
+
+#app {
+  display: flex;
+  height: 100%;
+  width: 100%;
+}
+
+#sidebar {
+  width: 250px;
+  min-width: 250px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 10px 6px;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.side-head button { padding: 2px 8px; }
+
+#filter { margin: 0 10px 8px; width: calc(100% - 20px); }
+
+#file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 20px;
+  overflow-y: auto;
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+#file-list li {
+  padding: 4px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-left: 2px solid transparent;
+}
+#file-list li:hover { background: #2a2d2e; }
+#file-list li.active {
+  background: #094771;
+  border-left-color: var(--accent-hover);
+  color: #fff;
+}
+
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+}
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  min-height: 44px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+#toolbar .file-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: #cccccc;
+  max-width: 34vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+.dot.on { background: var(--red); }
+
+#editor-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg);
+}
+
+#editor {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 10px 12px;
+  tab-size: 4;
+}
+
+.placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+#statusbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 26px;
+  padding: 0 12px;
+  background: var(--panel-2);
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+
+/* --------------------------- CodeMirror 覆盖 --------------------------- */
+
+.CodeMirror {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.CodeMirror-gutters {
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+}
+.CodeMirror-linenumber { color: #5a5a5a; }
+.CodeMirror-cursor { border-left: 1px solid #aeafad; }
+.CodeMirror-selected { background: #264f78 !important; }
+.CodeMirror-activeline-background { background: #232323; }
+
+/* 基础高亮配色（不依赖额外主题文件） */
+.cm-s-default .cm-keyword { color: #569cd6; }
+.cm-s-default .cm-atom { color: #569cd6; }
+.cm-s-default .cm-number { color: #b5cea8; }
+.cm-s-default .cm-def { color: #dcdcaa; }
+.cm-s-default .cm-variable { color: #9cdcfe; }
+.cm-s-default .cm-variable-2 { color: #9cdcfe; }
+.cm-s-default .cm-property { color: #9cdcfe; }
+.cm-s-default .cm-operator { color: #d4d4d4; }
+.cm-s-default .cm-comment { color: #6a9955; }
+.cm-s-default .cm-string { color: #ce9178; }
+.cm-s-default .cm-string-2 { color: #ce9178; }
+.cm-s-default .cm-meta { color: #d7ba7d; }
+.cm-s-default .cm-tag { color: #569cd6; }
+.cm-s-default .cm-attribute { color: #9cdcfe; }
+.cm-s-default .cm-qualifier { color: #dcdcaa; }
+.cm-s-default .cm-builtin { color: #4ec9b0; }
+.cm-s-default .cm-bracket { color: #d4d4d4; }
+.cm-s-default .cm-header { color: #569cd6; font-weight: 600; }
+.cm-s-default .cm-link { color: #569cd6; }
+
+/* ------------------------------- 回收站 ------------------------------- */
+
+.panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(560px, 92vw);
+  max-height: 76vh;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .55);
+  display: flex;
+  flex-direction: column;
+  z-index: 60;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+#trash-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow-y: auto;
+}
+#trash-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #333;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+#trash-list li span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -------------------------------- toast -------------------------------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 42px;
+  transform: translateX(-50%) translateY(10px);
+  background: #323233;
+  color: #e6e6e6;
+  border: 1px solid #4d4d4d;
+  border-radius: 6px;
+  padding: 9px 16px;
+  font-size: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease;
+  max-width: 86vw;
+  text-align: center;
+  z-index: 80;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.error { border-color: var(--red); color: #ffd7d0; }
+
+/* ------------------------------ 移动端 ------------------------------ */
+
+.only-mobile { display: none; }
+
+#rotate-tip {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: #111;
+  color: #ddd;
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  text-align: center;
+}
+
+/* 窄屏 / 平板：文件列表改为抽屉 */
+@media (max-width: 1024px) {
+  #sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 50;
+    width: 240px;
+    min-width: 240px;
+    transform: translateX(-100%);
+    transition: transform .2s ease;
+    box-shadow: 4px 0 18px rgba(0, 0, 0, .5);
+  }
+  #sidebar.open { transform: translateX(0); }
+  .only-mobile { display: inline-block; }
+  #toolbar .file-name { max-width: 30vw; }
+  #toolbar { gap: 4px; padding: 5px 8px; }
+  #toolbar button { padding: 5px 8px; font-size: 11px; }
+}
+
+/* 手机横屏：进一步压缩，保证编辑区够高 */
+@media (max-height: 520px) and (orientation: landscape) {
+  #toolbar { min-height: 36px; padding: 3px 6px; }
+  #toolbar button { padding: 3px 7px; font-size: 11px; }
+  #toolbar .file-name { font-size: 11px; max-width: 26vw; }
+  #statusbar { height: 20px; font-size: 10px; }
+  .CodeMirror, #editor { font-size: 12px; }
+  #sidebar { width: 210px; min-width: 210px; }
+  #file-list li { padding: 3px 10px; font-size: 11px; }
+}
+
+/* 手机竖屏：提示旋转（编辑器横屏体验才好） */
+@media (orientation: portrait) and (max-width: 900px) and (pointer: coarse) {
+  #rotate-tip { display: flex; }
+}
