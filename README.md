@@ -57,10 +57,11 @@ python main.py --ping
 
 | 命令 | 作用 |
 | --- | --- |
+| `python main.py` | 打开 tkinter 图形界面（`gui` 子命令同效） |
 | `python main.py pull` | 拉取远端文件到 `local_files/`，覆盖前自动备份到 `.filesync/backups/<时间>/` |
 | `python main.py status` | 查看工作区 / 暂存区状态 |
 | `python main.py add [路径…]` | 暂存改动（不带参数 = 全部） |
-| `python main.py commit -m "说明"` | 生成提交（自动生成 commit id） |
+| `python main.py commit -m 说明` | 生成提交（自动生成 commit id；多词可直接跟，不必加引号） |
 | `python main.py push` | 推送本地提交（文件 + 提交信息 + commit id） |
 | `python main.py check <id>` | 查看某次提交：提交信息 + 文件改动（绿色 `+X` / 红色 `-Y`） |
 | `python main.py check list [N]` | 查看提交记录，默认最近 20 条 |
@@ -99,6 +100,31 @@ Date:   2026-10-16 12:00
       +40  -0
   D old.html
       +0  -25
+```
+
+## 图形界面
+
+`python main.py`（无参数）打开 tkinter 界面：
+
+- 顶部：连接测试 / 拉取 / 刷新状态
+- 左侧：工作区状态列表（待提交 / 未暂存 / 未跟踪，彩色标记）
+- 右侧：提交信息、暂存选中、暂存全部、提交、推送、提交历史
+- 底部：实时操作日志
+- 「提交历史」窗口双击某行可看该次提交的 `+X / -Y`
+
+所有耗时操作（pull / push / 扫描）都在后台线程执行，界面不会卡住。
+
+代码结构：
+
+```
+main.py              入口
+filesync/config.py   路径与常量
+filesync/client.py   签名请求 / 密钥
+filesync/diff.py     行级 diff
+filesync/workspace.py 扫描 / 本地仓库
+filesync/ops.py      业务操作
+filesync/cli.py      命令行
+filesync/gui.py      tkinter 界面
 ```
 
 ***
